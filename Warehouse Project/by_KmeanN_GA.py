@@ -83,7 +83,7 @@ def kmeans(X, k, max_iters=100, tol=1e-4):
     np.random.seed(0) # cố định kết quả qua những lần random
 
     #chọn k điểm ngẫu nhiên làm trung tâm
-    #X.shape[0] : số hàng(ma trận) - số điểm dữ liệu
+    #X.shape[0] : số hàng(ma trận) hay số điểm dữ liệu
     centroids = X[np.random.choice(X.shape[0], k, replace=False)]
 
 
@@ -284,7 +284,7 @@ with open(file_path, "a", newline="", encoding="utf-8") as file:
             # Ghi kết quả vào file
             new_row = ["Kmeans + GA", i, POPULATION_SIZE, NUM_GENERATION,0.1, file_name, ng,
                     len(batchs[i]), best_fitness, execute_time, best_distance]
-            writer.writerow(new_row)
+            #writer.writerow(new_row)
         
         total_distance += best_distance
         
