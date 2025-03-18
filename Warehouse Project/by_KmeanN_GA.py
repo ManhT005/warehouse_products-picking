@@ -83,7 +83,7 @@ def kmeans(X, k, max_iters=100, tol=1e-4):
     np.random.seed(0) # cố định kết quả qua những lần random
 
     #chọn k điểm ngẫu nhiên làm trung tâm
-    #X.shape[0] : số hàng(ma trận) hay số điểm dữ liệu
+    #X.shape[0] : số hàng(ma trận) - số điểm dữ liệu
     centroids = X[np.random.choice(X.shape[0], k, replace=False)]
 
 
@@ -119,9 +119,13 @@ def kmeans(X, k, max_iters=100, tol=1e-4):
 cá thể là thứ tự thăm (shelve : layer) -> (shelve : layer)
 '''
 #khởi tạo quần thể
-def initial_population(size, eg_member):
-    """Tạo quần thể ban đầu"""
-    return [random.sample(eg_member, len(eg_member)) for _ in range(size)]
+def initial_population(size, member): 
+    population = []
+    for _ in range(POPULATION_SIZE):
+        shuffled_member = member[:]
+        random.shuffle(shuffled_member)
+        population.append(shuffled_member)
+    return population
 
 def calculate_distance(path):
     total_d = 0
@@ -140,46 +144,61 @@ def calculate_distance(path):
 
     return total_d
 
-def calculate_fitness(population):
-    global warehouse, demand
-    fit = []
-    for individual in population: 
-        total_distance = 0
-        load = 0
-        collected = {item: 0 for item in demand}
-        path = [(0, 0)]  # Robot bắt đầu từ kho
+
+def calculate_fitness(individual, warehouse, demand):
+    warehouse_copy = copy.deepcopy(warehouse)
+    demand_copy = copy.deepcopy(demand)
+    
+    total_distance = 0
+    load = 0
+    collected = {item: 0 for item in demand_copy.keys()}
+    path = [(0, 0)]  # Robot bắt đầu từ kho
+    
+    for shelf,layer in individual:
+        product, quantity = warehouse_copy.get((shelf, layer), (None, 0))  # Xử lý trường hợp không có sản phẩm
+
+        if product is None or collected[product] >= demand_copy[product]:
+            continue  # Bỏ qua nếu sản phẩm không hợp lệ hoặc đã lấy đủ
         
-        for shelf, layer in individual:
-            product, quantity = warehouse[(shelf, layer)]
-            
-            if collected[product] < demand[product]:
-                needed = min(demand[product] - collected[product], quantity, robot_capacity - load)
-                collected[product] += needed
-                load += needed
-                warehouse[(shelf, layer)][1] -= needed
-                path.append((shelf, layer))
-
-                if load >= robot_capacity:  # Nếu đầy tải, quay về kho
-                    total_distance += calculate_distance(path) + calculate_distance([(0, 0), path[-1]])
-                    path = [(0, 0)]
-                    load = 0  
-
-                if needed < quantity:  # Nếu còn hàng, chèn lại vào danh sách
-                    individual.append((shelf, layer))
-
-            if sum(collected.values()) >= sum(demand.values()):
-                break  
-
-            if total_distance + calculate_distance(path) > robot_maxDistance:
-                total_distance += calculate_distance(path) + calculate_distance([(0, 0), path[-1]])
-                path = [(0, 0)]
+        needed = min(demand_copy[product] - collected[product], quantity, robot_capacity - load)
+        collected[product] += needed
+        load += needed
+        warehouse_copy[(shelf, layer)] = (product, quantity - needed)  # Cập nhật số lượng còn lại
         
-        if path[-1] != (0, 0):
-            total_distance += calculate_distance(path) + calculate_distance([(0, 0), path[-1]])
+        # Cập nhật lại đơn yêu cầu
+        demand_copy[product] -= needed  
+
+        path.append((shelf, layer))
+
+        if load >= robot_capacity:  # Nếu đầy tải, quay về kho
+            total_distance += calculate_distance(path) + calculate_distance([path[-1], (0, 0)])
+            path = [(0, 0)]
+            load = 0  
+
+        # Nếu còn hàng, chèn lại vào danh sách duyệt
+        if needed < quantity:
+            individual.append((shelf, layer))
+
+        # Kiểm tra nếu đã thu thập đủ tất cả sản phẩm cần thiết
+        if all(demand_copy[p] <= 0 for p in demand_copy):  
+            break  
+
+        # Kiểm tra giới hạn quãng đường
+        if total_distance + calculate_distance(path) > robot_maxDistance:
+            total_distance += calculate_distance(path) + calculate_distance([path[-1], (0, 0)])
+            path = [(0, 0)]
         
-        fitness = 100/ total_distance
-        fit.append(fitness)  
-    return fit
+    # Nếu robot chưa về kho, cộng thêm khoảng cách về kho
+    if path[-1] != (0, 0):
+        total_distance += calculate_distance(path) + calculate_distance([path[-1], (0, 0)])
+        
+    # Tránh lỗi chia cho 0 nếu total_distance == 0
+    fitness = 100 / (1 + total_distance) 
+  
+    return fitness, warehouse_copy, demand_copy
+
+
+
 
 # Chọn cha mẹ (Tournament Selection)
 def find_parent(population, fitness, k=5):
@@ -188,18 +207,27 @@ def find_parent(population, fitness, k=5):
     return selected[0][0]
 
 # Lai ghép (Crossover - Order Crossover)
+import random
+
 def hybrid(parent1, parent2):
     child = [-1] * len(parent1)
+    
+    # Chọn ngẫu nhiên 2 điểm cắt, đảm bảo chúng hợp lệ
     start, end = sorted(random.sample(range(len(parent1)), 2))
+    
     # Sao chép đoạn giữa từ parent1
     child[start:end + 1] = parent1[start:end + 1]
+    
     # Điền phần còn lại từ parent2
     current_index = 0
     for gene in parent2:
         if gene not in child:
-            while child[current_index] != -1:
+            # Tìm vị trí trống (-1) để điền gene
+            while current_index < len(child) and child[current_index] != -1:
                 current_index += 1
-            child[current_index] = gene
+            # Chỉ điền nếu vẫn còn vị trí hợp lệ
+            if current_index < len(child):
+                child[current_index] = gene
 
     return child
 
@@ -258,41 +286,55 @@ with open(file_path, "a", newline="", encoding="utf-8") as file:
     total_distance = 0
     #Dùng GA cho mỗi nhóm :
     for i in range(num_clus):
-        NUM_GENERATION = 60
-        POPULATION_SIZE = 40
+        NUM_GENERATION = 40
+        POPULATION_SIZE = 60
         population = initial_population(POPULATION_SIZE,batchs[i])
 
         best_distance = float('inf')
         best_route = []
-
+        print("Nhóm",i,':')
+        print('Example individual :',batchs[i], end = '\n')
+        print('warehouse :',warehouse, end = '\n')
+        print('demand :', demand)
         # Vòng lặp tiến hóa
         for ng in range(NUM_GENERATION):
-            fitness = calculate_fitness(population)
-            best_fitness = max(fitness)
+            fitness = []
+            best_fit = 0
 
-            best = fitness.index(best_fitness)
-            min_distance = 100/best_fitness
+            for mem in population:
+                fit,_,_ = calculate_fitness(mem, warehouse, demand)
+                fitness.append(fit)
+                if fit > best_fit:
+                    best_fit = fit
+            
+            
+            best = fitness.index(best_fit)
+            min_distance = (100 / best_fit) - 1
 
             if min_distance < best_distance:
                 best_distance = min_distance
                 best_route = population[best]
 
             population = generate_New_population(population, fitness)
-
+            
             execute_time = time.time() - start_time
 
             # Ghi kết quả vào file
-            new_row = ["Kmeans + GA", i, POPULATION_SIZE, NUM_GENERATION,0.1, file_name, ng,
-                    len(batchs[i]), best_fitness, execute_time, best_distance]
+            new_row = ["Kmeans + GA", i, POPULATION_SIZE, NUM_GENERATION,0.1, file_name, ng,len(batchs[i]), best_fit, execute_time, best_distance]
             #writer.writerow(new_row)
         
         total_distance += best_distance
-        
-        print("Nhóm",i,':')
+
+        #cập nhật dữ liệu hàng và yêu cầu
+        _, new_wh, new_dm = calculate_fitness(best_route, warehouse, demand)
+        warehouse = new_wh
+        demand = new_dm
+
         #print(centre[i])
         print('Thứ tự lấy hàng :',best_route)
         print('Quãng đường vận chuyển tốt nhất tìm được :',best_distance)
     print('Total distance',total_distance)
+    print(demand)
 
 '''
 {(1, 1): ['Abiu', 9],
